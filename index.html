@@ -13,6 +13,7 @@
       button { padding:10px 14px; border-radius:8px; border:1px solid #ddd; cursor:pointer; }
       .token-box { background:#fff; border:1px dashed #bbb; padding:10px; border-radius:8px; }
       .small { font-size:12px; color:#666; }
+      .hint { color:#555; font-size:14px; }
     </style>
   </head>
   <body>
@@ -23,6 +24,12 @@
       <button id="btnSendInChat" disabled>ส่งข้อความเข้าแชท/ห้องนี้</button>
       <button id="btnSharePicker" disabled>ส่งผ่าน ShareTargetPicker</button>
     </div>
+
+    <div class="row">
+      <button id="btnGrantScope" disabled>รับสิทธิ์ chat_message.write</button>
+      <button id="btnReLogin" disabled>Re-login (เคลียร์สิทธิ์เดิม)</button>
+    </div>
+    <div id="ctxNote" class="hint"></div>
 
     <!-- โซน Access Token -->
     <div class="token-box">
@@ -48,6 +55,7 @@
       let cachedParams = {};
       let accessToken = null;
       let showToken = false;
+      let ctx = null;
 
       function maskToken(t) {
         if (!t || t.length < 14) return '(hidden)';
@@ -59,7 +67,11 @@
           alert('ต้องเปิดในแอป LINE ถึงจะใช้ส่งเข้าแชท/ห้องนี้ได้');
           return;
         }
-        const ctx = liff.getContext() || {};
+        if (!ctx || ctx.type === 'none') {
+          alert('ตอนนี้ context = none (ไม่ได้เปิดจากห้องแชท) ใช้ ShareTargetPicker หรือเปิดลิงก์จากในแชท');
+          return;
+        }
+
         const targetInfo = ctx.type + (ctx.groupId ? ' ('+ctx.groupId+')' : ctx.roomId ? ' ('+ctx.roomId+')' : '');
         const msgText =
           `แจ้งเตือนจาก LIFF\n` +
@@ -73,7 +85,8 @@
           alert('ส่งเข้าแชท/ห้องนี้สำเร็จ');
         } catch (e) {
           console.error(e);
-          alert('ส่งไม่สำเร็จ: ' + (e?.message || e));
+          // ถ้า scope ยังไม่ได้รับ จะขึ้น permission error
+          alert('ส่งไม่สำเร็จ: ' + (e?.message || e) + '\nกรุณากด "รับสิทธิ์ chat_message.write" แล้วลองใหม่');
         }
       }
 
@@ -114,7 +127,7 @@
 
       async function verifyTokenAtBackend() {
         try {
-          const idToken = liff.getIDToken(); // ส่งไปตรวจ OIDC เพิ่มได้ถ้าต้องการ
+          const idToken = liff.getIDToken();
           const resp = await fetch(VERIFY_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -135,11 +148,16 @@
 
       (async () => {
         const out = document.getElementById('out');
-        const btnSendInChat  = document.getElementById('btnSendInChat');
-        const btnSharePicker = document.getElementById('btnSharePicker');
-        const btnToggleToken = document.getElementById('btnToggleToken');
-        const btnCopyToken   = document.getElementById('btnCopyToken');
-        const btnVerifyToken = document.getElementById('btnVerifyToken');
+        const note = document.getElementById('ctxNote');
+
+        const btnSendInChat   = document.getElementById('btnSendInChat');
+        const btnSharePicker  = document.getElementById('btnSharePicker');
+        const btnGrantScope   = document.getElementById('btnGrantScope');
+        const btnReLogin      = document.getElementById('btnReLogin');
+
+        const btnToggleToken  = document.getElementById('btnToggleToken');
+        const btnCopyToken    = document.getElementById('btnCopyToken');
+        const btnVerifyToken  = document.getElementById('btnVerifyToken');
 
         try {
           const url = new URL(location.href);
@@ -148,39 +166,67 @@
           await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
 
           if (!liff.isLoggedIn()) {
-            liff.login({ redirectUri: location.href });
+            // ขอสิทธิ์ให้ครบตั้งแต่แรก (รวม chat_message.write)
+            liff.login({
+              redirectUri: location.href,
+              scope: ['profile','openid','chat_message.write'],
+              prompt: 'consent'
+            });
             return;
           }
 
           cachedProfile = await liff.getProfile();
-          accessToken = liff.getAccessToken();  // <<< เพิ่มบรรทัดนี้
+          accessToken   = liff.getAccessToken();
+          ctx           = liff.getContext();
 
           const payload = {
             params: cachedParams,
             userId: cachedProfile.userId,
             displayName: cachedProfile.displayName,
             inClient: liff.isInClient(),
-            context: liff.getContext(),
+            context: ctx,  // type: "group"/"room"/"utou"/"none"
             os: liff.getOS(),
             language: liff.getLanguage(),
             version: liff.getVersion(),
-            accessTokenHash: liff.getContext()?.accessTokenHash || null // อ้างอิง hash ได้หากต้องการ
+            accessTokenHash: ctx?.accessTokenHash || null
           };
           out.textContent = JSON.stringify(payload, null, 2);
 
-          // ปุ่ม messaging
+          // Messaging buttons
           btnSharePicker.disabled = false;
           btnSharePicker.addEventListener('click', sharePicker);
 
-          if (liff.isInClient()) {
+          if (liff.isInClient() && ctx?.type && ctx.type !== 'none') {
             btnSendInChat.disabled = false;
             btnSendInChat.addEventListener('click', sendInChat);
+            note.textContent = `context = ${ctx.type} (สามารถส่งเข้าแชท/ห้องนี้ได้)`;
+          } else {
+            btnSendInChat.disabled = true;
+            note.textContent = `context = none (ส่งเข้าแชทไม่ได้ — ให้เปิดลิงก์จากในห้องแชท หรือใช้ ShareTargetPicker)`;
           }
 
-          // ปุ่ม token
+          // Scope helper buttons
+          btnGrantScope.disabled = false;
+          btnGrantScope.addEventListener('click', () => {
+            // ขอสิทธิ์ใหม่แบบบังคับ consent อีกครั้ง
+            liff.login({
+              redirectUri: location.href,
+              scope: ['profile','openid','chat_message.write'],
+              prompt: 'consent'
+            });
+          });
+
+          btnReLogin.disabled = false;
+          btnReLogin.addEventListener('click', () => {
+            liff.logout();
+            location.replace(location.href); // เคลียร์เซสชันแล้วโหลดใหม่
+          });
+
+          // Token buttons
           btnToggleToken.disabled = false;
-          btnCopyToken.disabled = !accessToken;
+          btnCopyToken.disabled   = !accessToken;
           btnVerifyToken.disabled = !accessToken;
+
           btnToggleToken.addEventListener('click', () => { showToken = !showToken; refreshTokenUI(); });
           btnCopyToken.addEventListener('click', copyToken);
           btnVerifyToken.addEventListener('click', verifyTokenAtBackend);
