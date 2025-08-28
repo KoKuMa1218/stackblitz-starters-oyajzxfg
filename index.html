@@ -11,6 +11,8 @@
       .error { color:#c00; }
       .row { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
       button { padding:10px 14px; border-radius:8px; border:1px solid #ddd; cursor:pointer; }
+      .token-box { background:#fff; border:1px dashed #bbb; padding:10px; border-radius:8px; }
+      .small { font-size:12px; color:#666; }
     </style>
   </head>
   <body>
@@ -18,11 +20,20 @@
     <pre id="out">กำลังเริ่มต้น...</pre>
 
     <div class="row">
-      <!-- วิธีที่ 1: ส่งเข้าแชทเดิม (ต้องเปิดใน LINE app) -->
       <button id="btnSendInChat" disabled>ส่งข้อความเข้าแชท/ห้องนี้</button>
-
-      <!-- วิธีที่ 2: เปิดตัวเลือกให้ส่งหาใครก็ได้ -->
       <button id="btnSharePicker" disabled>ส่งผ่าน ShareTargetPicker</button>
+    </div>
+
+    <!-- โซน Access Token -->
+    <div class="token-box">
+      <div><strong>Access Token</strong> (<span class="small">กดแสดงเมื่อจำเป็นเท่านั้น</span>)</div>
+      <div id="accessTokenMasked" style="margin:6px 0;">-</div>
+      <div class="row">
+        <button id="btnToggleToken" disabled>แสดง/ซ่อน</button>
+        <button id="btnCopyToken" disabled>คัดลอก</button>
+        <button id="btnVerifyToken" disabled>ส่งไปตรวจสอบที่ Backend</button>
+      </div>
+      <div class="small">แนะนำให้ใช้ ID Token/Access Token ตรวจสอบตัวตนฝั่งเซิร์ฟเวอร์ (OIDC / LINE Verify)</div>
     </div>
 
     <p id="openInLineWrap" style="display:none">
@@ -31,16 +42,23 @@
 
     <script>
       const LIFF_ID = '2001836212-OMrmxm4E'; // <-- LIFF ID ของคุณ
+      const VERIFY_ENDPOINT = 'https://your-backend.example.com/verify'; // <-- เปลี่ยนเป็นของคุณ
 
       let cachedProfile = null;
       let cachedParams = {};
+      let accessToken = null;
+      let showToken = false;
+
+      function maskToken(t) {
+        if (!t || t.length < 14) return '(hidden)';
+        return t.slice(0, 8) + '…' + t.slice(-6);
+      }
 
       async function sendInChat() {
         if (!liff.isInClient()) {
           alert('ต้องเปิดในแอป LINE ถึงจะใช้ส่งเข้าแชท/ห้องนี้ได้');
           return;
         }
-        // สร้างข้อความที่อยากส่ง
         const ctx = liff.getContext() || {};
         const targetInfo = ctx.type + (ctx.groupId ? ' ('+ctx.groupId+')' : ctx.roomId ? ' ('+ctx.roomId+')' : '');
         const msgText =
@@ -51,9 +69,7 @@
           `target: ${targetInfo}`;
 
         try {
-          await liff.sendMessages([
-            { type: 'text', text: msgText }
-          ]);
+          await liff.sendMessages([{ type: 'text', text: msgText }]);
           alert('ส่งเข้าแชท/ห้องนี้สำเร็จ');
         } catch (e) {
           console.error(e);
@@ -62,7 +78,6 @@
       }
 
       async function sharePicker() {
-        // ใช้ได้ทั้งใน/นอก LINE (แต่บางเครื่องอาจไม่รองรับ)
         const available = await liff.isApiAvailable('shareTargetPicker');
         if (!available) {
           alert('อุปกรณ์นี้ไม่รองรับ ShareTargetPicker');
@@ -75,10 +90,7 @@
           `campaign: ${cachedParams.campaign || '-'}`;
 
         try {
-          const res = await liff.shareTargetPicker([
-            { type: 'text', text: msgText }
-          ]);
-          // ถ้าผู้ใช้กดยกเลิก res จะเป็น undefined
+          const res = await liff.shareTargetPicker([{ type: 'text', text: msgText }]);
           if (res) alert('ส่งสำเร็จ');
         } catch (e) {
           console.error(e);
@@ -86,10 +98,48 @@
         }
       }
 
+      function refreshTokenUI() {
+        const el = document.getElementById('accessTokenMasked');
+        el.textContent = showToken ? (accessToken || '-') : maskToken(accessToken);
+      }
+
+      async function copyToken() {
+        try {
+          await navigator.clipboard.writeText(accessToken || '');
+          alert('คัดลอก Access Token แล้ว');
+        } catch {
+          alert('คัดลอกไม่สำเร็จ');
+        }
+      }
+
+      async function verifyTokenAtBackend() {
+        try {
+          const idToken = liff.getIDToken(); // ส่งไปตรวจ OIDC เพิ่มได้ถ้าต้องการ
+          const resp = await fetch(VERIFY_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              access_token: accessToken,
+              id_token: idToken,
+              liff_user_id: cachedProfile?.userId
+            })
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data?.error || JSON.stringify(data));
+          alert('ตรวจสอบที่ Backend สำเร็จ: ' + JSON.stringify(data));
+        } catch (e) {
+          console.error(e);
+          alert('Backend verify ล้มเหลว: ' + (e?.message || e));
+        }
+      }
+
       (async () => {
         const out = document.getElementById('out');
         const btnSendInChat  = document.getElementById('btnSendInChat');
         const btnSharePicker = document.getElementById('btnSharePicker');
+        const btnToggleToken = document.getElementById('btnToggleToken');
+        const btnCopyToken   = document.getElementById('btnCopyToken');
+        const btnVerifyToken = document.getElementById('btnVerifyToken');
 
         try {
           const url = new URL(location.href);
@@ -103,20 +153,22 @@
           }
 
           cachedProfile = await liff.getProfile();
+          accessToken = liff.getAccessToken();  // <<< เพิ่มบรรทัดนี้
 
           const payload = {
             params: cachedParams,
             userId: cachedProfile.userId,
             displayName: cachedProfile.displayName,
             inClient: liff.isInClient(),
-            context: liff.getContext(),  // ดู type: "group"/"room"/"utou"/"none"
+            context: liff.getContext(),
             os: liff.getOS(),
             language: liff.getLanguage(),
             version: liff.getVersion(),
+            accessTokenHash: liff.getContext()?.accessTokenHash || null // อ้างอิง hash ได้หากต้องการ
           };
           out.textContent = JSON.stringify(payload, null, 2);
 
-          // เปิดปุ่ม
+          // ปุ่ม messaging
           btnSharePicker.disabled = false;
           btnSharePicker.addEventListener('click', sharePicker);
 
@@ -125,7 +177,16 @@
             btnSendInChat.addEventListener('click', sendInChat);
           }
 
-          // ลิงก์เปิดใน LINE (กรณีอยู่ browser นอก LINE)
+          // ปุ่ม token
+          btnToggleToken.disabled = false;
+          btnCopyToken.disabled = !accessToken;
+          btnVerifyToken.disabled = !accessToken;
+          btnToggleToken.addEventListener('click', () => { showToken = !showToken; refreshTokenUI(); });
+          btnCopyToken.addEventListener('click', copyToken);
+          btnVerifyToken.addEventListener('click', verifyTokenAtBackend);
+          refreshTokenUI();
+
+          // ลิงก์เปิดใน LINE (กรณีอยู่นอกแอป)
           if (!liff.isInClient()) {
             const link = document.getElementById('openInLineLink');
             const wrap = document.getElementById('openInLineWrap');
