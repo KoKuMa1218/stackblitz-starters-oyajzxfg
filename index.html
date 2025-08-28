@@ -3,65 +3,133 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>LIFF Test on StackBlitz</title>
+    <title>LIFF Test on GitHub Pages / Stack</title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <style>
-      body {
-        font-family: system-ui;
-        padding: 16px;
-      }
-      pre {
-        background: #f6f8fa;
-        padding: 12px;
-        border-radius: 8px;
-      }
-      .error {
-        color: #c00;
-      }
+      body { font-family: system-ui; padding: 16px; }
+      pre { background:#f6f8fa; padding:12px; border-radius:8px; }
+      .error { color:#c00; }
+      .row { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+      button { padding:10px 14px; border-radius:8px; border:1px solid #ddd; cursor:pointer; }
     </style>
   </head>
   <body>
     <h1>LIFF Test: userId + QR params</h1>
     <pre id="out">กำลังเริ่มต้น...</pre>
-    <p id="openInLineWrap" style="display: none">
+
+    <div class="row">
+      <!-- วิธีที่ 1: ส่งเข้าแชทเดิม (ต้องเปิดใน LINE app) -->
+      <button id="btnSendInChat" disabled>ส่งข้อความเข้าแชท/ห้องนี้</button>
+
+      <!-- วิธีที่ 2: เปิดตัวเลือกให้ส่งหาใครก็ได้ -->
+      <button id="btnSharePicker" disabled>ส่งผ่าน ShareTargetPicker</button>
+    </div>
+
+    <p id="openInLineWrap" style="display:none">
       เปิดใน LINE: <a id="openInLineLink" href="#">คลิกที่นี่</a>
     </p>
 
     <script>
-      const LIFF_ID = '2001836212-OMrmxm4E'; // <-- ใส่ของคุณ
+      const LIFF_ID = '2001836212-OMrmxm4E'; // <-- LIFF ID ของคุณ
+
+      let cachedProfile = null;
+      let cachedParams = {};
+
+      async function sendInChat() {
+        if (!liff.isInClient()) {
+          alert('ต้องเปิดในแอป LINE ถึงจะใช้ส่งเข้าแชท/ห้องนี้ได้');
+          return;
+        }
+        // สร้างข้อความที่อยากส่ง
+        const ctx = liff.getContext() || {};
+        const targetInfo = ctx.type + (ctx.groupId ? ' ('+ctx.groupId+')' : ctx.roomId ? ' ('+ctx.roomId+')' : '');
+        const msgText =
+          `แจ้งเตือนจาก LIFF\n` +
+          `userId: ${cachedProfile?.userId}\n` +
+          `branch: ${cachedParams.branch || '-'}\n` +
+          `campaign: ${cachedParams.campaign || '-'}\n` +
+          `target: ${targetInfo}`;
+
+        try {
+          await liff.sendMessages([
+            { type: 'text', text: msgText }
+          ]);
+          alert('ส่งเข้าแชท/ห้องนี้สำเร็จ');
+        } catch (e) {
+          console.error(e);
+          alert('ส่งไม่สำเร็จ: ' + (e?.message || e));
+        }
+      }
+
+      async function sharePicker() {
+        // ใช้ได้ทั้งใน/นอก LINE (แต่บางเครื่องอาจไม่รองรับ)
+        const available = await liff.isApiAvailable('shareTargetPicker');
+        if (!available) {
+          alert('อุปกรณ์นี้ไม่รองรับ ShareTargetPicker');
+          return;
+        }
+        const msgText =
+          `แจ้งเตือนจาก LIFF (ShareTargetPicker)\n` +
+          `userId: ${cachedProfile?.userId}\n` +
+          `branch: ${cachedParams.branch || '-'}\n` +
+          `campaign: ${cachedParams.campaign || '-'}`;
+
+        try {
+          const res = await liff.shareTargetPicker([
+            { type: 'text', text: msgText }
+          ]);
+          // ถ้าผู้ใช้กดยกเลิก res จะเป็น undefined
+          if (res) alert('ส่งสำเร็จ');
+        } catch (e) {
+          console.error(e);
+          alert('ส่งไม่สำเร็จ: ' + (e?.message || e));
+        }
+      }
 
       (async () => {
         const out = document.getElementById('out');
+        const btnSendInChat  = document.getElementById('btnSendInChat');
+        const btnSharePicker = document.getElementById('btnSharePicker');
+
         try {
           const url = new URL(location.href);
-          const params = Object.fromEntries(url.searchParams.entries());
+          cachedParams = Object.fromEntries(url.searchParams.entries());
 
-          await liff.init({
-            liffId: LIFF_ID,
-            withLoginOnExternalBrowser: true,
-          });
+          await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
 
           if (!liff.isLoggedIn()) {
             liff.login({ redirectUri: location.href });
             return;
           }
 
-          const profile = await liff.getProfile();
+          cachedProfile = await liff.getProfile();
+
           const payload = {
-            params,
-            userId: profile.userId,
-            displayName: profile.displayName,
+            params: cachedParams,
+            userId: cachedProfile.userId,
+            displayName: cachedProfile.displayName,
             inClient: liff.isInClient(),
+            context: liff.getContext(),  // ดู type: "group"/"room"/"utou"/"none"
             os: liff.getOS(),
             language: liff.getLanguage(),
             version: liff.getVersion(),
           };
           out.textContent = JSON.stringify(payload, null, 2);
 
+          // เปิดปุ่ม
+          btnSharePicker.disabled = false;
+          btnSharePicker.addEventListener('click', sharePicker);
+
+          if (liff.isInClient()) {
+            btnSendInChat.disabled = false;
+            btnSendInChat.addEventListener('click', sendInChat);
+          }
+
+          // ลิงก์เปิดใน LINE (กรณีอยู่ browser นอก LINE)
           if (!liff.isInClient()) {
             const link = document.getElementById('openInLineLink');
             const wrap = document.getElementById('openInLineWrap');
-            const q = new URLSearchParams(params).toString();
+            const q = new URLSearchParams(cachedParams).toString();
             link.href = `https://liff.line.me/${LIFF_ID}${q ? '?' + q : ''}`;
             wrap.style.display = 'block';
           }
