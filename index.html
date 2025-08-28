@@ -19,9 +19,7 @@
 
     <div class="row">
       <button id="btnSendInChat" disabled>ส่งข้อความเข้าแชท/ห้องนี้ (LIFF)</button>
-
       <button id="btnPushViaBot" disabled>ส่งด้วยบอท (ผ่าน Backend)</button>
-
       <button id="btnSharePicker" disabled>ShareTargetPicker</button>
     </div>
 
@@ -30,8 +28,9 @@
     </p>
 
     <script>
-      const LIFF_ID = '2001836212-OMrmxm4E';  // ใส่ของคุณ
-      const BACKEND_PUSH_URL = 'https://491ef9c50b9c.ngrok-free.app/api/push'; // <-- เปลี่ยนเป็นของคุณ
+      const LIFF_ID = '2001836212-OMrmxm4E';  // เช่น '2001836212-OMrmxm4E'
+      const BACKEND_BASE_URL = 'https://d54cc3dc3105.ngrok-free.app';
+      const BACKEND_PUSH_URL = BACKEND_BASE_URL + '/api/push';
 
       let profile = null;
       let params = {};
@@ -60,7 +59,7 @@
           const payload = {
             branch: params.branch || null,
             campaign: params.campaign || null,
-            userId: profile.userId || null,
+            userId: profile.userId || null, // fallback ถ้าไม่มีกลุ่ม/ห้อง
             groupId: ctx?.groupId || null,
             roomId: ctx?.roomId || null,
             text:
@@ -72,7 +71,9 @@
           const res = await fetch(BACKEND_PUSH_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            mode: 'cors',
+            cache: 'no-store'
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data?.error || JSON.stringify(data));
@@ -111,7 +112,6 @@
           params = Object.fromEntries(url.searchParams.entries());
 
           await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
-
           if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
 
           profile = await liff.getProfile();
@@ -123,11 +123,11 @@
             language: liff.getLanguage(), version: liff.getVersion()
           }, null, 2);
 
-          btnPushViaBot.disabled = false;          btnPushViaBot.onclick = pushViaBot;
-          btnSharePicker.disabled = false;         btnSharePicker.onclick = sharePicker;
+          btnPushViaBot.disabled = false;  btnPushViaBot.onclick = pushViaBot;
+          btnSharePicker.disabled = false; btnSharePicker.onclick = sharePicker;
 
           if (liff.isInClient() && ctx?.type && ctx.type !== 'none') {
-            btnSendInChat.disabled = false;        btnSendInChat.onclick = sendInChat;
+            btnSendInChat.disabled = false; btnSendInChat.onclick = sendInChat;
           }
 
           if (!liff.isInClient()) {
