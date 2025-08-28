@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LIFF Test on StackBlitz</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+      body {
+        font-family: system-ui;
+        padding: 16px;
+      }
+      pre {
+        background: #f6f8fa;
+        padding: 12px;
+        border-radius: 8px;
+      }
+      .error {
+        color: #c00;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LIFF Test: userId + QR params</h1>
+    <pre id="out">กำลังเริ่มต้น...</pre>
+    <p id="openInLineWrap" style="display: none">
+      เปิดใน LINE: <a id="openInLineLink" href="#">คลิกที่นี่</a>
+    </p>
+
+    <script>
+      const LIFF_ID = '2001836212-OMrmxm4E'; // <-- ใส่ของคุณ
+
+      (async () => {
+        const out = document.getElementById('out');
+        try {
+          const url = new URL(location.href);
+          const params = Object.fromEntries(url.searchParams.entries());
+
+          await liff.init({
+            liffId: LIFF_ID,
+            withLoginOnExternalBrowser: true,
+          });
+
+          if (!liff.isLoggedIn()) {
+            liff.login({ redirectUri: location.href });
+            return;
+          }
+
+          const profile = await liff.getProfile();
+          const payload = {
+            params,
+            userId: profile.userId,
+            displayName: profile.displayName,
+            inClient: liff.isInClient(),
+            os: liff.getOS(),
+            language: liff.getLanguage(),
+            version: liff.getVersion(),
+          };
+          out.textContent = JSON.stringify(payload, null, 2);
+
+          if (!liff.isInClient()) {
+            const link = document.getElementById('openInLineLink');
+            const wrap = document.getElementById('openInLineWrap');
+            const q = new URLSearchParams(params).toString();
+            link.href = `https://liff.line.me/${LIFF_ID}${q ? '?' + q : ''}`;
+            wrap.style.display = 'block';
+          }
+        } catch (e) {
+          out.classList.add('error');
+          out.textContent = 'Error: ' + (e?.message || e);
+          console.error(e);
+        }
+      })();
+    </script>
+  </body>
+</html>
